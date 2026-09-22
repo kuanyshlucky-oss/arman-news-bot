@@ -20,9 +20,25 @@ if (!BOT_TOKEN || !ADMIN_CHAT_ID || !TARGET_CHANNEL) {
 
 const bot = new Telegraf(BOT_TOKEN);
 
+// Any error thrown inside a handler must never take down the polling loop —
+// without this, one bad update (e.g. a stale callback query) kills the bot
+// silently and every click after it stops working.
+bot.catch((err) => console.error('Unhandled bot error:', err.message));
+
 bot.start((ctx) => {
   ctx.reply(`Привет! Твой chat_id: ${ctx.chat.id}`);
 });
+
+// Telegram invalidates a callback query if it's not answered quickly enough
+// ("query is too old"); that's expected for stale/queued clicks and must
+// never throw past this point.
+async function safeAnswerCbQuery(ctx, text) {
+  try {
+    await ctx.answerCbQuery(text);
+  } catch (err) {
+    console.error('answerCbQuery failed:', err.message);
+  }
+}
 
 const TEXT_LIMIT = 4096;
 const CAPTION_LIMIT = 1024;
@@ -126,7 +142,7 @@ bot.action(/pub:(\d+)/, async (ctx) => {
   const store = loadStore();
   const post = store.pending[id];
   if (!post) {
-    await ctx.answerCbQuery('Пост уже обработан или не найден');
+    await safeAnswerCbQuery(ctx, 'Пост уже обработан или не найден');
     return;
   }
   try {
@@ -145,11 +161,11 @@ bot.action(/pub:(\d+)/, async (ctx) => {
     }
     delete store.pending[id];
     saveStore(store);
-    await ctx.answerCbQuery('Опубликовано ✅');
+    await safeAnswerCbQuery(ctx, 'Опубликовано ✅');
     await finalizeMessage(ctx, post, '✅ Опубликовано');
   } catch (err) {
     console.error('publish failed:', err.message);
-    await ctx.answerCbQuery('Ошибка публикации');
+    await safeAnswerCbQuery(ctx, 'Ошибка публикации');
   }
 });
 
@@ -159,7 +175,7 @@ bot.action(/rej:(\d+)/, async (ctx) => {
   const post = store.pending[id];
   delete store.pending[id];
   saveStore(store);
-  await ctx.answerCbQuery('Отклонено');
+  await safeAnswerCbQuery(ctx, 'Отклонено');
   if (post) {
     await finalizeMessage(ctx, post, '❌ Отклонено');
   }
